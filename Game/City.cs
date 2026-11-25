@@ -11,11 +11,13 @@ internal sealed class City
     private readonly StandardMaterial3D _cream = Material("#b4a68c");
     private readonly StandardMaterial3D _glass = Material("#53656a");
     private Node3D? _passingBuildings;
+    private readonly CampaignDay _day;
 
     public Node3D Root { get; }
 
-    public City(Place place)
+    public City(Place place, CampaignDay day)
     {
+        _day = day;
         Root = new Node3D { Name = place.ToString() };
         switch (place)
         {
@@ -246,7 +248,7 @@ internal sealed class City
         }
         float yaw = facing == 1 ? 0 : 180;
         Box(Root, new(x, 0.76f, z + facing * 0.375f), new(Mathf.Min(width - 0.08f, 1.67f), 0.27f, 0.054f), _iron);
-        Sign(Root, $"{offer.Name}\n{ClubLedger.Money(offer.Price)}", new(x, 0.76f, z + facing * 0.413f), yaw, 0.0036f);
+        Sign(Root, $"{offer.Name}\n{ClubLedger.Money(offer.PriceOn(_day))}", new(x, 0.76f, z + facing * 0.413f), yaw, 0.0036f);
         Target(Root, fixture, new(x, 1.19f, z + facing * 0.24f), new(width - 0.09f, 0.98f, 0.57f));
     }
 

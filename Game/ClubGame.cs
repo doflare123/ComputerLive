@@ -30,7 +30,9 @@ public partial class ClubGame : Node3D
     private Place? _tripDestination;
     private City? _city;
     private float _rideTime;
-    private readonly Dictionary<Fixture, StockOffer> _quotes = new();
+    private sealed record RecordedPrice(StockOffer Offer, CampaignDay Day, int Price);
+
+    private readonly Dictionary<Fixture, RecordedPrice> _quotes = new();
     private readonly HashSet<Fixture> _inspected = new();
     private Fixture? _target;
     private string _result = "";
@@ -100,7 +102,7 @@ public partial class ClubGame : Node3D
     public override void _Process(double delta)
     {
         if (_place == Place.Club)
-            _basement.Television.Advance(delta, _club.Day);
+            _basement.Television.Advance(delta, _club.Today);
 
         if (_tripDestination is not { } destination)
             return;
@@ -162,9 +164,9 @@ public partial class ClubGame : Node3D
         _inspected.Clear();
         _visitorTime = 0;
         _basement.HideVisitor();
-        _basement.Television.Power(false, _club.Day);
+        _basement.Television.Power(false, _club.Today);
         Enter(Place.Club, restart: true);
-        Open("Компьютерный клуб", "Петербург, 1993 год. У вас есть деньги на первый компьютер и подвал на примете. Осмотрите помещение, подпишите договор и проведите первую неделю.\n\nWASD или стрелки — ходить. Мышь — осмотреться. E — взаимодействовать. Esc — меню.",
+        Open("Компьютерный клуб", "Петербург, 1993 год. У вас есть стартовый капитал и подвал на примете. Осмотрите помещение, подпишите договор и проведите первую неделю.\n\nWASD или стрелки — ходить. Мышь — осмотреться. E — взаимодействовать. Esc — меню.",
             [new("Осмотреть подвал", CloseMenu)]);
     }
 
@@ -182,7 +184,7 @@ public partial class ClubGame : Node3D
             case Fixture.Phone: Notebook(); break;
             case Fixture.Bench: Bench(); break;
             case Fixture.Desk: Desk(); break;
-            case Fixture.Television: _basement.Television.Power(!_basement.Television.On, _club.Day); break;
+            case Fixture.Television: _basement.Television.Power(!_basement.Television.On, _club.Today); break;
             case Fixture.ClubExit: Enter(Place.Courtyard); break;
             case Fixture.ClubEntry: Enter(Place.Club); break;
             case Fixture.TramStop: TramMenu(); break;
@@ -230,7 +232,7 @@ public partial class ClubGame : Node3D
         {
             if (_basement.Root.GetParent() != null)
                 RemoveChild(_basement.Root);
-            _city = new City(place);
+            _city = new City(place, _club.Today);
             AddChild(_city.Root);
         }
 
@@ -265,8 +267,8 @@ public partial class ClubGame : Node3D
             return;
         }
 
-        bool available = !_club.ReviewDue && _club.Cash >= MarketStock.ReturnTicket;
-        Open("Трамвайная остановка", $"Билет туда и обратно стоит {Money(MarketStock.ReturnTicket)}\nНа радиорынке продают б/у ПК и дискеты. На торговой улице есть два магазина.",
+        bool available = !_club.ReviewDue && _club.Cash >= _club.ReturnTicket;
+        Open("Трамвайная остановка", $"Билет туда и обратно стоит {Money(_club.ReturnTicket)}\nНа радиорынке продают б/у ПК и дискеты. На торговой улице есть два магазина.",
             [new("Поехать на радиорынок", () => TakeTram(Place.Market), available), new("Поехать на торговую улицу", () => TakeTram(Place.Shopping), available)]);
     }
 
@@ -283,8 +285,7 @@ public partial class ClubGame : Node3D
 
     private void Notebook()
     {
-        var quotes = _quotes.Values.OrderBy(offer => offer.Name).ThenBy(offer => offer.Price).Select(offer =>
-            $"{offer.Name} · {Money(offer.Price)} · {offer.Seller}" + (offer.WornFan && _inspected.Contains(offer.Fixture) ? " · изношен вентилятор" : ""));
+        var quotes = _quotes.Values.OrderBy(quote => quote.Offer.Name).ThenBy(quote => quote.Price).Select(PriceNote);
         string description = _quotes.Count == 0
             ? "Подойдите к прилавку и осмотрите товар. Цена и имя продавца появятся здесь. Блокнот можно открыть клавишей Tab."
             : string.Join("\n", quotes);
@@ -292,9 +293,22 @@ public partial class ClubGame : Node3D
         Open("Блокнот / цены и адреса", description + $"\n\n{inventory}\nРадиорынок — скупка и дискеты. Торговая улица — «Радиодеталь» и «Электроника».", []);
     }
 
+    private string PriceNote(RecordedPrice quote)
+    {
+        var offer = quote.Offer;
+        string note = $"{offer.Name} · {Money(quote.Price)} · {offer.Seller} ({quote.Day.Date:dd.MM})";
+        if (offer.PricedInDollars && quote.Day.RublesPerDollar != _club.Today.RublesPerDollar)
+            note += " · курс изменился";
+        if (offer.WornFan && _inspected.Contains(offer.Fixture))
+            note += " · изношен вентилятор";
+        return note;
+    }
+
     private void OfferMenu(StockOffer offer)
     {
-        _quotes[offer.Fixture] = offer;
+        var today = _club.Today;
+        int price = offer.PriceOn(today);
+        _quotes[offer.Fixture] = new RecordedPrice(offer, today, price);
         string details = _inspected.Contains(offer.Fixture) ? offer.Details : "Можно осмотреть товар у прилавка перед покупкой.";
         if (offer.Hardware != null && _club.CarriedComputer != null)
             details += "\nУ вас уже есть коробка. Отнесите её в клуб, чтобы освободить руки.";
@@ -302,6 +316,11 @@ public partial class ClubGame : Node3D
             details += "\nВ клубе заняты все рабочие места.";
         else if (!_club.Leased)
             details += "\nПодпишите договор аренды, чтобы подготовить место для покупки.";
+        else if (!_club.ReviewDue && _club.Cash < price)
+            details += "\nВ кассе не хватает денег на покупку.";
+
+        if (offer.PricedInDollars)
+            details += $"\nПо прайсу {offer.ListedPrice} долл. Курс — {Money(today.RublesPerDollar)} за доллар.";
 
         var choices = new List<Choice>();
         if (!_inspected.Contains(offer.Fixture))
@@ -310,7 +329,7 @@ public partial class ClubGame : Node3D
                 _inspected.Add(offer.Fixture);
                 OfferMenu(offer);
             }));
-        choices.Add(new($"Купить   {Money(offer.Price)}", () =>
+        choices.Add(new($"Купить   {Money(price)}", () =>
         {
             if (!_club.Buy(offer))
                 return;
@@ -320,7 +339,7 @@ public partial class ClubGame : Node3D
             Refresh();
             CloseMenu();
         }, _club.CanBuy(offer)));
-        Open(offer.Name, $"{offer.Seller} · {Money(offer.Price)}\n{details}", choices);
+        Open(offer.Name, $"{offer.Seller} · {Money(price)}\n{details}", choices);
     }
 
     private void Bench()
@@ -342,12 +361,12 @@ public partial class ClubGame : Node3D
         if (station.Hardware == Hardware.Broken)
         {
             Open($"Верстак / место {Number(index)}", "Плата сгорела при запуске незавершённой сборки. Замените её, чтобы собрать компьютер заново.",
-                [new($"Заменить плату   {Money(Repair)}", () =>
+                [new($"Заменить плату   {Money(_club.BoardReplacementCost)}", () =>
                 {
                     _club.RepairStation(station);
                     Refresh();
                     AssembleMenu(index);
-                }, _club.Cash >= Repair)]);
+                }, _club.Cash >= _club.BoardReplacementCost)]);
             return;
         }
 
@@ -460,14 +479,14 @@ public partial class ClubGame : Node3D
         int ready = _club.Stations.Count(station => station.Ready);
         string room = _club.Renovated ? "Стены покрашены, помещение выглядит ухоженным." :
             "Запущенное помещение отпугивает тех, кто готов платить дороже.";
-        string last = _club.LastShift is { } shift ? $"\nДень {shift.Day} — посетителей {shift.Visitors}, выручка {Money(shift.Revenue)} {shift.Incidents}" : "";
+        string last = _club.LastShift is { } shift ? $"\n{shift.Day.Label} — посетителей {shift.Visitors}, выручка {Money(shift.Revenue)} {shift.Incidents}" : "";
 
         var choices = new List<Choice>
         {
             new($"Открыть смену на {ShiftHours} часов", () => RunShift(true), ready > 0),
             new("Пропустить день без открытия", () => RunShift(false)),
-            new("Снизить тариф на 400 р.", () => Rate(-400), _club.Rate > 800),
-            new("Поднять тариф на 400 р.", () => Rate(400), _club.Rate < 8_000),
+            new($"Снизить тариф на {Money(RateStep)}", () => Rate(-RateStep), _club.Rate > MinimumRate),
+            new($"Поднять тариф на {Money(RateStep)}", () => Rate(RateStep), _club.Rate < MaximumRate),
         };
         if (!_club.Renovated)
             choices.Add(new($"Покрасить стены   {Money(Renovation)}", () =>
@@ -477,7 +496,10 @@ public partial class ClubGame : Node3D
                 Desk();
             }, _club.Cash >= Renovation));
 
-        Open($"Журнал смен / день {_club.Day}", $"Тариф за час — {Money(_club.Rate)} Готовых мест {ready} из {_club.Stations.Length}.\n{room}\nПредстоящий платёж от {Money(_club.AmountDue)}{last}", choices);
+        Open($"Журнал смен / {_club.Today.Label}",
+            $"Тариф за час — {Money(_club.Rate)} Готовых мест {ready} из {_club.Stations.Length}.\n" +
+            $"Спрос — до {_club.ExpectedVisitors} одночасовых визитов за смену.\n{room}\n" +
+            $"Предстоящий платёж от {Money(_club.AmountDue)}{last}", choices);
     }
 
     private void Rate(int delta)
@@ -493,8 +515,8 @@ public partial class ClubGame : Node3D
 
         _basement.HideVisitor();
         _visitorTime = 0;
-        _result = open ? $"День {shift.Day}. Посетителей {shift.Visitors}   Выручка {Money(shift.Revenue)}" :
-            $"День {shift.Day}. Клуб был закрыт.";
+        _result = open ? $"{shift.Day.Label}. Посетителей {shift.Visitors}   Выручка {Money(shift.Revenue)}" :
+            $"{shift.Day.Label}. Клуб был закрыт.";
         if (shift.Visitors > 0)
         {
             _basement.ShowVisitor(Array.FindIndex(_club.Stations, station => station.Ready));
@@ -576,7 +598,7 @@ public partial class ClubGame : Node3D
     private string FixtureName(Fixture fixture)
     {
         if (MarketStock.TryGet(fixture, out var offer))
-            return $"{offer.Name} · {Money(offer.Price)}";
+            return $"{offer.Name} · {Money(offer.PriceOn(_club.Today))}";
 
         int index = fixture - Fixture.Station1;
         return fixture switch

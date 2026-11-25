@@ -27,24 +27,36 @@ internal sealed class Station
     };
 }
 
-internal sealed record Shift(int Day, int Visitors, int Revenue, string Incidents);
+internal sealed record Shift(CampaignDay Day, int Visitors, int Revenue, string Incidents);
 
 internal sealed class ClubLedger
 {
     public const int RentDeposit = 45_000;
     public const int WeeklyRent = 43_000;
     public const int Renovation = 32_000;
-    public const int Repair = 24_000;
+    // Цена платы без процессора по объявлению KC Computers от 27 июля 1993 года, ориентир для ремонта.
+    private const int ReplacementBoardDollars = 110;
     public const int MaxDay = 7;
     public const int ShiftHours = 6;
+    public const int RateStep = 100;
+    public const int MinimumRate = RateStep;
+    public const int MaximumRate = 2_000;
+    // Игровой ориентир: около 1% средней зарплаты за май 1993 года (37 505 р., Госкомстат РФ).
+    private const int StartingRate = 400;
+    // Два комплекта и лицензии по максимальной цене недели, залог и запас на первый счёт.
+    private const int StartingCash = 2_350_000;
 
     private readonly Random _random = new(1993);
     private static readonly CultureInfo RubleFormat = CultureInfo.GetCultureInfo("ru-RU");
 
     public Station[] Stations { get; } = [new(), new(), new()];
-    public int Cash { get; private set; } = 390_000;
-    public int Rate { get; private set; } = 2_800;
+    public int Cash { get; private set; } = StartingCash;
+    public int Rate { get; private set; } = StartingRate;
     public int Day { get; private set; } = 1;
+    public CampaignDay Today => new(CampaignDay.FirstDate.AddDays(Day - 1));
+    public int ReturnTicket => Today.ReturnTicket;
+    public int BoardReplacementCost => ReplacementBoardDollars * Today.RublesPerDollar;
+    public int ExpectedVisitors => DemandFor(Today);
     public bool Leased { get; private set; }
     public bool Renovated { get; private set; }
     public StockOffer? CarriedComputer { get; private set; }
@@ -71,14 +83,14 @@ internal sealed class ClubLedger
         return true;
     }
 
-    public bool BuyTicket() => !ReviewDue && Spend(MarketStock.ReturnTicket);
+    public bool BuyTicket() => !ReviewDue && Spend(ReturnTicket);
 
-    public bool CanBuy(StockOffer offer) => Leased && !ReviewDue && Cash >= offer.Price &&
+    public bool CanBuy(StockOffer offer) => Leased && !ReviewDue && Cash >= offer.PriceOn(Today) &&
         (offer.Hardware == null || (CarriedComputer == null && Stations.Any(station => station.Hardware == Hardware.Empty)));
 
     public bool Buy(StockOffer offer)
     {
-        if (!CanBuy(offer) || !Spend(offer.Price))
+        if (!CanBuy(offer) || !Spend(offer.PriceOn(Today)))
             return false;
 
         if (offer.Hardware != null)
@@ -119,7 +131,7 @@ internal sealed class ClubLedger
 
     public bool RepairStation(Station station)
     {
-        if (ReviewDue || station.Hardware != Hardware.Broken || !Spend(Repair))
+        if (ReviewDue || station.Hardware != Hardware.Broken || !Spend(BoardReplacementCost))
             return false;
 
         station.Hardware = Hardware.Kit;
@@ -161,22 +173,27 @@ internal sealed class ClubLedger
         return true;
     }
 
-    public void ChangeRate(int amount) => Rate = Math.Clamp(Rate + amount, 800, 8_000);
+    public void ChangeRate(int amount) => Rate = (int)Math.Clamp((long)Rate + amount, MinimumRate, MaximumRate);
 
-    public int DemandChange => Day switch { 1 or 2 => -1, 3 or 4 or 5 => 1, _ => 2 };
+    private int DemandFor(CampaignDay day)
+    {
+        int budgetVisitors = Rate <= StartingRate ? (day.IsWeekend ? 12 : 8) : 0;
+        int regularVisitors = Rate <= 2 * StartingRate ? (day.IsWeekend ? 12 : 10) : 0;
+        int premiumVisitors = Rate <= 3 * StartingRate ? (Renovated ? 3 : 1) : 0;
+        return budgetVisitors + regularVisitors + premiumVisitors;
+    }
 
     public Shift? RunShift(bool open)
     {
         if (!Leased || ReviewDue || (open && !Stations.Any(station => station.Ready)))
             return null;
 
+        var today = Today;
         var visitors = 0;
         var incidents = "";
         if (open)
         {
-            int demand = Math.Max(0, 10 + DemandChange + (Renovated ? 5 : 0) - (Rate - 800) / 500);
-            if (Rate > 4_500 && !Renovated)
-                demand = 0;
+            int demand = DemandFor(today);
 
             foreach (var station in Stations.Where(station => station.Ready))
             {
@@ -210,7 +227,8 @@ internal sealed class ClubLedger
         Cash += revenue;
         Revenue += revenue;
         Visitors += visitors;
-        LastShift = new Shift(Day++, visitors, revenue, incidents);
+        LastShift = new Shift(today, visitors, revenue, incidents);
+        Day++;
         return LastShift;
     }
 

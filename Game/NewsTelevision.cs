@@ -14,7 +14,7 @@ internal sealed class NewsTelevision
     private readonly ShaderMaterial _signal;
     private double _seconds;
     private int _segment = -1;
-    private int _day;
+    private CampaignDay _day;
 
     public bool On { get; private set; }
 
@@ -47,7 +47,7 @@ internal sealed class NewsTelevision
         room.AddChild(_screen);
     }
 
-    public void Power(bool on, int day)
+    public void Power(bool on, CampaignDay day)
     {
         On = on;
         _seconds = 0;
@@ -58,7 +58,7 @@ internal sealed class NewsTelevision
             Advance(0, day);
     }
 
-    public void Advance(double delta, int day)
+    public void Advance(double delta, CampaignDay day)
     {
         if (!On)
             return;
@@ -71,18 +71,7 @@ internal sealed class NewsTelevision
         _segment = segment;
         _day = day;
         _picture.Texture = segment == 1 ? _market : _anchor;
-        _caption.Text = (_day, segment) switch
-        {
-            (<= 2, 0) => "Цены на продукты снова выросли",
-            (<= 2, 1) => "Покупатели сокращают расходы",
-            (<= 2, _) => "На досуг у горожан уходит меньше",
-            (<= 5, 0) => "Горожане получили зарплату",
-            (<= 5, 1) => "На рынках стало оживлённее",
-            (<= 5, _) => "После работы оживают и клубы",
-            (_, 0) => "В городе начались выходные",
-            (_, 1) => "Петербуржцы гуляют и делают покупки",
-            _ => "Клубы ждут больше гостей",
-        };
+        _caption.Text = day.NewsCaption(segment);
     }
 
     private Label AddCaption(string text, Vector2 position, int fontSize)

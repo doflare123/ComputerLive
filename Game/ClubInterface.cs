@@ -77,7 +77,7 @@ internal sealed class ClubInterface
 
 	public void Update(ClubLedger club, string location, string objective, string result)
 	{
-		_day.Text = $"ПЕТЕРБУРГ / 1993     ДЕНЬ {Math.Min(club.Day, ClubLedger.MaxDay)} ИЗ {ClubLedger.MaxDay}     {location.ToUpperInvariant()}";
+		_day.Text = $"ПЕТЕРБУРГ / {club.Today.Label.ToUpperInvariant()}     {location.ToUpperInvariant()}";
 		_cash.Text = ClubLedger.Money(club.Cash);
 		_objective.Text = objective;
 		_result.Text = result;
